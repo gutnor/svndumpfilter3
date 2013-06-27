@@ -515,7 +515,7 @@ def read_lump(f):
     if lump.hastext:
         lump.text = f.read(tcl)
 
-    lump.orig_text = os.linesep.join(lines) + lump.prop + lump.text
+    lump.orig_text = "".join(lines) + lump.prop + lump.text
 
     return lump
 
@@ -558,7 +558,7 @@ def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format):
     if opts.debug:
         print >> flog, ("Running command: '%s | %s'" %
                         (' '.join(cmd), ' '.join(cmd_filter)))
-    fnull = open('/dev/null', 'w')
+    fnull = open('/dev/null', 'wb')
     p1 = Popen(cmd, stdout=PIPE, stderr=fnull)
     p2 = Popen(cmd_filter, stdin=p1.stdout,
                stdout=PIPE, stderr=fnull)
@@ -606,7 +606,7 @@ def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format):
 
             lines = ("Node-copyfrom-path: %s" % srcpath,
                      "Node-copyfrom-rev: %d" % srcrev)
-            lump_sub.setprop('svn:untangled', os.linesep.join(lines))
+            lump_sub.setprop('svn:untangled', "\n".join(lines))
 
         write_lump(fout, lump_sub)
 
@@ -737,6 +737,12 @@ def main():
     """
     opts, inpaths = parse_options()
 
+    if sys.platform == "win32":
+        import msvcrt
+        msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+        msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+
+
     # Open in and out files.
     fr = sys.stdin
     fw = sys.stdout
@@ -791,7 +797,7 @@ def main():
                 print >> flog, 'Revision %s filtered out.' % revno
                 skipping = True
                 continue
-
+            
             skipping = False
 
             # Filter svn:log property
