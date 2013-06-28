@@ -209,17 +209,20 @@ __author_orig__ = 'Simon Tatham (svndumpfilter2)'
 __contributors__ = ('Martin Blais <blais@furius.ca>',
                     'Matthias Troffaes <matthias.troffaes@gmail.com>',)
 
-
 import sys
+
 if sys.version_info[:2] < (2, 4):
     raise SystemExit("Error: You need Python 2.4 or over.")
 
 # stdlib imports
-import os, re, string, md5, warnings
+import os
+import re
+import string
+import hashlib
+import warnings
+
 from os.path import basename
 from subprocess import Popen, PIPE
-
-
 
 # Constants for versions.
 # Note: v3 does not really exist, see this for details:
@@ -258,11 +261,13 @@ def splitpath(s):
         pass
     return thelist
 
+
 def joinpath(thelist, prefix=""):
     """
     Convert a path-as-list into a string.
     """
     return prefix + string.join(thelist, "/")
+
 
 def catpath(path1, path2, prefix=""):
     """
@@ -276,17 +281,18 @@ class InterestingPaths:
     """
     Decide whether a pathname is interesting or not.
     """
+
     def __init__(self, args, reverse):
         self.reverse = reverse
-        """True if we should reverse the matches, e.g. true means exclude on the
-        list of paths rather than include."""
+        # True if we should reverse the matches, e.g. true means exclude on the
+        # list of paths rather than include.
 
         self.res = []
         for a in args:
             self.res.append([])
             for component in splitpath(a):
                 self.res[-1].append(re.compile('^' + component + '$'))
-        """List of regular expressions to match against/exclude."""
+                ##List of regular expressions to match against/exclude.
 
     def interesting(self, path):
         """
@@ -300,7 +306,7 @@ class InterestingPaths:
             # then we  cannot have a match, so skip this case
             if len(rcomps) > len(acomps):
                 continue
-            # see if rcomps matches acomps
+                # see if rcomps matches acomps
             for r, a in zip(rcomps, acomps):
                 if not r.match(a):
                     break
@@ -319,6 +325,7 @@ class Lump:
     A class and some functions to handle a single lump of
     RFC822-ish-headers-plus-data read from an SVN dump file.
     """
+
     def __init__(self):
         self.hdrlist = []
         self.hdrdict = {}
@@ -331,7 +338,7 @@ class Lump:
         """
         Set header 'key' to 'val'.
         """
-        if not self.hdrdict.has_key(key):
+        if not key in self.hdrdict:
             self.hdrlist.append(key)
         self.hdrdict[key] = val
 
@@ -339,7 +346,7 @@ class Lump:
         """
         Delete the header 'key'.
         """
-        if self.hdrdict.has_key(key):
+        if key in self.hdrdict:
             del self.hdrdict[key]
             self.hdrlist.remove(key)
 
@@ -349,28 +356,28 @@ class Lump:
         """
         index = 0
         while 1:
-            if self.prop[index:index+2] == "K ":
+            if self.prop[index:index + 2] == "K ":
                 wantval = 1
-            elif self.prop[index:index+2] == "D ":
+            elif self.prop[index:index + 2] == "D ":
                 wantval = 0
-            elif self.prop[index:index+9] == "PROPS-END":
+            elif self.prop[index:index + 9] == "PROPS-END":
                 break
             else:
-                raise "Unrecognised record in props section"
+                raise Exception("Unrecognised record in props section")
             nlpos = string.find(self.prop, "\n", index)
             assert nlpos > 0
-            namelen = string.atoi(self.prop[index+2:nlpos])
-            assert self.prop[nlpos+1+namelen] == "\n"
-            name = self.prop[nlpos+1:nlpos+1+namelen]
-            index = nlpos+2+namelen
+            namelen = string.atoi(self.prop[index + 2:nlpos])
+            assert self.prop[nlpos + 1 + namelen] == "\n"
+            name = self.prop[nlpos + 1:nlpos + 1 + namelen]
+            index = nlpos + 2 + namelen
             if wantval:
-                assert self.prop[index:index+2] == "V "
+                assert self.prop[index:index + 2] == "V "
                 nlpos = string.find(self.prop, "\n", index)
                 assert nlpos > 0
-                proplen = string.atoi(self.prop[index+2:nlpos])
-                assert self.prop[nlpos+1+proplen] == "\n"
-                prop = self.prop[nlpos+1:nlpos+1+proplen]
-                index = nlpos+2+proplen
+                proplen = string.atoi(self.prop[index + 2:nlpos])
+                assert self.prop[nlpos + 1 + proplen] == "\n"
+                prop = self.prop[nlpos + 1:nlpos + 1 + proplen]
+                index = nlpos + 2 + proplen
             else:
                 prop = None
             self.proplist.append(name)
@@ -380,7 +387,7 @@ class Lump:
         """
         Set property 'key' to 'val'.
         """
-        if not self.propdict.has_key(key):
+        if not key in self.propdict:
             self.proplist.append(key)
         self.propdict[key] = val
         self.hasprop = True
@@ -389,7 +396,7 @@ class Lump:
         """
         Delete property 'key'.
         """
-        if self.propdict.has_key(key):
+        if key in self.propdict:
             del self.propdict[key]
             self.proplist.remove(key)
 
@@ -412,7 +419,7 @@ class Lump:
                     self.prop += "K %d\n%s\n" % (len(key), key)
                     self.prop += "V %d\n%s\n" % (len(val), val)
             if self.hasprop:
-                self.prop = self.prop + "PROPS-END\n"
+                self.prop += "PROPS-END\n"
 
         # Now fix up the content length headers.
         if len(self.prop) > 0:
@@ -421,12 +428,12 @@ class Lump:
             self.delhdr("Prop-content-length")
 
         if self.hastext and len(self.text) >= 0 or \
-           (self.hdrdict.get('Node-action', None) == 'add' and
-            self.hdrdict.get('Node-kind', None) == 'file' and
-            not self.hdrdict.get('Node-copyfrom-path', None)):
+                (self.hdrdict.get('Node-action', None) == 'add' and
+                    self.hdrdict.get('Node-kind', None) == 'file' and
+                    not self.hdrdict.get('Node-copyfrom-path', None)):
 
             self.sethdr("Text-content-length", str(len(self.text)))
-            m = md5.new()
+            m = hashlib.md5()
             m.update(self.text)
             self.sethdr("Text-content-md5", m.hexdigest())
         else:
@@ -434,13 +441,14 @@ class Lump:
             self.delhdr("Text-content-md5")
 
         if len(self.prop) > 0 or len(self.text) > 0:
-            self.sethdr("Content-length", str(len(self.prop)+len(self.text)))
+            self.sethdr("Content-length", str(len(self.prop) + len(self.text)))
         else:
             self.delhdr("Content-length")
 
 
 format_re = re.compile('SVN-fs-dump-format-version: (\d+)\s*$')
 uuid_re = re.compile('UUID: ([0-9a-f\-]+)\s*$')
+
 
 def read_dump_header(f):
     """
@@ -460,6 +468,7 @@ def read_dump_header(f):
 
 header_re = re.compile('([a-zA-Z0-9\-]+): (.*)$')
 
+
 # Note: from Simon Tatham.
 def read_rfc822_headers(f):
     """
@@ -472,14 +481,14 @@ def read_rfc822_headers(f):
     while 1:
         s = f.readline()
         if not s:
-            return None, [] # end of file
+            return None, []  # end of file
 
         # Watch for the newline char that ends the headers.
         if s == '\n':
             if len(ret.hdrlist) > 0:
-                break # newline after headers ends them
+                break  # newline after headers ends them
             else:
-                continue # newline before headers is simply ignored
+                continue  # newline before headers is simply ignored
 
         lines.append(s)
 
@@ -490,6 +499,7 @@ def read_rfc822_headers(f):
         ret.sethdr(*mo.groups())
 
     return ret, lines
+
 
 # Note: from Simon Tatham.
 def read_lump(f):
@@ -537,11 +547,11 @@ def write_lump(f, lump):
 
     # Add newlines at the end of chunks, for readers.
     f.write('\n')
-    if not lump.hdrdict.has_key("Revision-number"):
+    if not "Revision-number" in lump.hdrdict:
         f.write('\n')
 
 
-def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format):
+def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format_dump):
     """
     Dumps 'srcpath' at revision 'srcrev' from repository 'repos',
     renaming the root of all the paths in it to 'path', and
@@ -553,7 +563,7 @@ def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format):
     # Must find the source node, as it existed in the given revision, and copy
     # it in full.
     cmd = ('svnadmin', 'dump', '-r', str(srcrev),
-           opts.repos, srcpath)
+           repos, srcpath)
     cmd_filter = ('svndumpfilter', 'include', srcpath)
     if opts.debug:
         print >> flog, ("Running command: '%s | %s'" %
@@ -572,7 +582,7 @@ def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format):
     format_sub, uuid_sub, text_sub = read_dump_header(fs)
 
     global format_warning
-    if fmtequiv[format] != fmtequiv[format_sub] and not format_warning:
+    if fmtequiv[format_dump] != fmtequiv[format_sub] and not format_warning:
         warnings.warn("Warning: Dump format is different than "
                       "the version of Subversion used to convert "
                       "move/copy into adds.")
@@ -581,16 +591,16 @@ def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format):
     # Read and drpo the revision.
     lump_sub = read_lump(fs)
     assert lump_sub is not None
-    assert lump_sub.hdrdict.has_key('Revision-number')
+    assert 'Revision-number' in lump_sub.hdrdict
 
     while 1:
         # Read one lump at a time
         lump_sub = read_lump(fs)
         if lump_sub is None:
-            break # At EOF
+            break  # At EOF
 
         # Make sure all the rest are file/dir lumps.
-        assert not lump_sub.hdrdict.has_key('Revision-number')
+        assert not 'Revision-number' in lump_sub.hdrdict
 
         # Translate filename to its new location.
         path_sub = lump_sub.hdrdict['Node-path']
@@ -623,6 +633,7 @@ def parse_options():
     progname = basename(sys.argv[0])
 
     import optparse
+
     parser = optparse.OptionParser(__doc__.strip())
 
     # Original svndumpfilter options.
@@ -638,13 +649,12 @@ def parse_options():
     parser.add_option('--preserve-revprops', action='store_true',
                       help="Don't filter revision properties.")
 
-
     parser.add_option('--quiet', action='store_true',
                       help="Do not display filtering statistics.")
 
     parser.add_option('-e', '--exclude', action='store_true',
                       help="The given paths are to be excluded rather than "
-                      "included (the default is to include).")
+                           "included (the default is to include).")
 
     parser.add_option('-p', '--prune-properties', action='store_true',
                       help="Prune empty properties if empty. This makes the "
@@ -655,23 +665,23 @@ def parse_options():
     parser.add_option('-u', '--untangle', action='store', dest='repos',
                       metavar='REPOS_PATH',
                       help="If True, convert move/copy from filtered paths "
-                      "to additions.  You need to specify the repository to "
-                      "fetch the missing files from.")
+                           "to additions.  You need to specify the repository to "
+                           "fetch the missing files from.")
 
     parser.add_option('-n', '--no-filter', action='store_true',
                       help="Do not actually apply filters, but just "
-                      "perform the requested conversions.  This can be used "
-                      "as a test by running the output into svndumpfilter, "
-                      "which should now succeed.")
+                           "perform the requested conversions.  This can be used "
+                           "as a test by running the output into svndumpfilter, "
+                           "which should now succeed.")
 
     parser.add_option('-k', '--ignore-missing', action='store_true',
                       help="Continue as much as possible after an error due to "
-                      "a missing file.  If such errors are present, the "
-                      "resulting noutput dump may not be usable (files will be "
-                      "missing.  The original svndumpfilter actually exits "
-                      "when this occurs (this is our default behaviour as "
-                      "well).  You can use this to view the list of files "
-                      "that are missing by using the specified filter.")
+                           "a missing file.  If such errors are present, the "
+                           "resulting noutput dump may not be usable (files will be "
+                           "missing.  The original svndumpfilter actually exits "
+                           "when this occurs (this is our default behaviour as "
+                           "well).  You can use this to view the list of files "
+                           "that are missing by using the specified filter.")
 
     parser.add_option("--filter-contents", type="string", nargs=3, default=[],
                       action="append", metavar="RX_FILES RX_MATCH SUB",
@@ -710,9 +720,9 @@ def parse_options():
     # Validate filter regular expressions
     try:
         opts.filter_contents = [(re.compile(a), re.compile(b), c)
-                                for a,b,c in opts.filter_contents]
+                                for a, b, c in opts.filter_contents]
         opts.filter_logs = [(re.compile(a), b)
-                            for a,b in opts.filter_logs]
+                            for a, b in opts.filter_logs]
     except Exception, e:
         parser.error("error parsing regular expression: %s" % str(e))
 
@@ -731,6 +741,7 @@ def parse_options():
 
     return opts, inpaths
 
+
 def main():
     """
     Main program that just reads the lumps and copies them out.
@@ -739,9 +750,9 @@ def main():
 
     if sys.platform == "win32":
         import msvcrt
+
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
         msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
-
 
     # Open in and out files.
     fr = sys.stdin
@@ -763,48 +774,47 @@ def main():
     paths = InterestingPaths(inpaths, opts.exclude)
 
     # Read the dumpfile header.
-    format, uuid, text = read_dump_header(fr)
+    format_version, uuid, text = read_dump_header(fr)
     fw.write(text)
 
-    if format not in __supported_versions__:
+    if format_version not in __supported_versions__:
         # Note: you could update this script easily to support other formats, it
         # will probably be trivial to do so.
         raise SystemExit("Error: dump file in format '%s' not supported." %
-                         format)
+                         format_version)
 
     filtered = set()
-    """Set of filtered paths."""
+    # Set of filtered paths."""
 
     converted = []
-    """List of (srcpath, destpath, type, rev) tuples that describe the paths
-    that were converted from move/copy into additions."""
+    # List of (srcpath, destpath, type, rev) tuples that describe the paths
+    # that were converted from move/copy into additions.
 
     skipping = False
-    """True while we are skipping a revision."""
+    # True while we are skipping a revision.
 
     # Process the dump file.
     while 1:
         # Read one lump at a time
         lump = read_lump(fr)
         if lump is None:
-            break # At EOF
+            break  # At EOF
 
         # Let the revisions pass through
-        if lump.hdrdict.has_key('Revision-number'):
+        if 'Revision-number' in lump.hdrdict:
 
             revno = lump.hdrdict['Revision-number']
             if int(revno) in opts.skip_rev:
                 print >> flog, 'Revision %s filtered out.' % revno
                 skipping = True
                 continue
-            
+
             skipping = False
 
             # Filter svn:log property
             # JT Revision 0 may not have an svn:log entry, so we need do accommodate that
             #   (added if condition)
-            if lump.hdrdict.has_key('svn:log'):
-                log = lump.propdict["svn:log"]
+            if 'svn:log' in lump.hdrdict:
                 num_subs = 0
                 for rx_search, sub in opts.filter_logs:
                     lump.propdict["svn:log"], subs = re.subn(rx_search, sub, lump.propdict["svn:log"])
@@ -846,7 +856,7 @@ def main():
             lump.correct_headers()
 
         # If this is not a move/copy.
-        if not lump.hdrdict.has_key("Node-copyfrom-path"):
+        if not "Node-copyfrom-path" in lump.hdrdict:
             # Just pass through.
             write_lump(fw, lump)
 
@@ -880,7 +890,7 @@ def main():
 
                 # Fetch the old revision from the repository.
                 fetch_rev_rename(opts.repos, srcrev, srcpath, path,
-                                 fw, flog, format)
+                                 fw, flog, format_version)
 
                 # We also check if the original lump includes a payload, and if
                 # it does, we need to add a change record providing the new
@@ -913,5 +923,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
