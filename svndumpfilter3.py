@@ -625,6 +625,98 @@ def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format_dump):
         raise SystemExit("Error: Running %s" % " ".join(cmd))
 
 
+class StandardPath:
+    """
+    Encapsulate a path that match the standard svn structure
+        project/trunk/...
+        project/branches/branch_name/...
+        project/tags/tag_name/...
+    Note: Does not support [path/]project because it becomes difficult to detect 
+          invalid path like path/project/path/tags and I don't need anything more complex.
+    """
+    branchtag_pattern = re.compile("^([^/]+)/(branches|tags)/([^/]+)(/.*)?$")
+    trunk_pattern = re.compile("^([^/]+)/trunk(/.*)?$")
+
+    def __init__(self, path):
+        branchtag_match = StandardPath.branchtag_pattern.match(path)
+        trunk_match = StandardPath.trunk_pattern.match(path)
+
+        if branchtag_match:
+            self.valid = True
+            self.trunk = False
+            self.project = branchtag_match.group(1)
+
+            if branchtag_match.group(2) == "branches":
+                self.branch = branchtag_match.group(3)
+                self.tag = ""
+            else:
+                self.tag = branchtag_match.group(3)
+                self.branch = ""
+            self.filepath = branchtag_match.group(4)
+        elif trunk_match:
+            self.valid = True
+            self.trunk = True
+            self.project = trunk_match.group(1)
+            self.branch = ""
+            self.tag = ""
+            self.filepath = trunk_match.group(2)
+        else:
+            self.valid = False
+
+    def isRoot(self):
+        """
+        Determine if the current path is a root path.
+        Example: project/trunk
+                 project/branch/release1.0
+        """
+        return self.filepath is None
+
+    def equalsVersion(self, other):
+        return self.trunk == other.trunk and\
+            self.tag == other.tag and\
+            self.branch == other.branch
+
+
+def inspect_copy_lump(flog, srcpath, path):
+    """
+    Inspect a copy operation in SVN to check for potential anomalies.
+    Assume you have a SVN with the standard structure
+    Supported:
+        Detect creating branch or tag from another source than trunk, branch or tag
+        Detect copying outside of trunk, branch or tag
+        Detect cross-project copying
+    """
+    to_path = StandardPath(path)
+    from_path = StandardPath(srcpath)
+
+    if not from_path.valid and not to_path.valid:
+        print >> flog, ("        Copy between non Standard Path: '%s' => '%s'" % (srcpath, path))
+    else:
+        if not to_path.valid:
+            print >> flog, ("        Copy to non Standard Path: '%s' => '%s'" % (srcpath, path))
+
+        if not from_path.valid:
+            print >> flog, ("        Copy from non Standard Path: '%s' => '%s'" % (srcpath, path))
+
+    if to_path.valid and from_path.valid:
+        if to_path.isRoot():
+            # Branching
+            if to_path.trunk:
+                print >> flog, ("        Overwriting trunk: '%s' => '%s'" % (srcpath, path))
+            elif not from_path.isRoot():
+                print >> flog, ("        Potential invalid branching: '%s' => '%s'" % (srcpath, path))
+            elif from_path.project != to_path.project:
+                print >> flog, ("        Cross project branching: '%s' => '%s'" % (srcpath, path))
+
+        else:
+            # File copy/move
+            if from_path.isRoot():
+                print >> flog, ("        Copy entire version in repository: '%s' => '%s'" % (srcpath, path))
+            elif not to_path.equalsVersion(from_path):
+                # That is typical fake merge
+                print >> flog, ("        Cross version copy: '%s' => '%s'" % (srcpath, path))
+
+
 def parse_options():
     """
     Parse and validate the options.
@@ -706,6 +798,13 @@ def parse_options():
                       metavar="REV",
                       help="Skip (filter out) a specific revision. You can "
                            "specify this option as many times as you need.")
+
+    parser.add_option('--standard-project-layout', action='store_true',
+                      help="Assume you have a SVN with the normal structure to do some extra validation.\n"
+                           "Standard structure=\n"
+                           "    project/trunk\n"
+                           "    project/branches/branch\n"
+                           "    project/tags/tag\n")
 
     parser.add_option('--debug', action='store_true',
                       help=optparse.SUPPRESS_HELP)
@@ -793,6 +892,8 @@ def main():
     skipping = False
     # True while we are skipping a revision.
 
+    # Current revision
+    revno = ""
     # Process the dump file.
     while 1:
         # Read one lump at a time
@@ -860,6 +961,13 @@ def main():
             # Just pass through.
             write_lump(fw, lump)
 
+            if opts.standard_project_layout:
+                spath = StandardPath(path)
+                if not spath.valid:
+                    print >> flog, '        [%s] Non Standard Path %s' % (lump.hdrdict['Node-action'], path)
+                elif spath.tag and spath.filepath:
+                    print >> flog, '        [%s] Committing in a tag %s' % (lump.hdrdict['Node-action'], path)
+
         else:
             # This is a move/copy.
             srcrev = int(lump.hdrdict["Node-copyfrom-rev"])
@@ -869,6 +977,9 @@ def main():
             if paths.interesting(srcpath):
                 # If it comes from an included path, just pass through.
                 write_lump(fw, lump)
+
+                if opts.standard_project_layout:
+                    inspect_copy_lump(flog, srcpath, path)
 
             else:
                 # Otherwise we deal with the case where the source comes from a
