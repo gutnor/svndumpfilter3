@@ -333,6 +333,7 @@ class Lump:
         self.text = ""
         self.proplist = []
         self.propdict = {}
+        self.written = False
 
     def sethdr(self, key, val):
         """
@@ -549,6 +550,25 @@ def write_lump(f, lump):
     f.write('\n')
     if not "Revision-number" in lump.hdrdict:
         f.write('\n')
+    lump.written = True
+
+
+def write_revision_lump(fw, flog, lump, revno, empty, skipping):
+    if not lump is None and not lump.written:
+        if skipping:
+            if not opts.quiet:
+                print >> flog, 'Revision %s filtered out.' % revno
+        elif empty and opts.drop_empty_revs and not(int(revno) == 0):
+            # Keep version 0, that's what the original svnfilterdump does anyway.
+            if not opts.quiet:
+                print >> flog, 'Drop Empty Revision %s.' % revno
+        else:
+            write_lump(fw, lump)
+            if not opts.quiet:
+                if not empty:
+                    print >> flog, 'Revision %s committed as %s.' % (revno, revno)
+                else:
+                    print >> flog, 'Empty Revision %s committed as %s.' % (revno, revno)
 
 
 def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format_dump):
@@ -737,7 +757,8 @@ def parse_options():
     parser.add_option('--drop-empty-revs', action='store_true',
                       help="Remove revisions emptied by filtering.")
     parser.add_option('--renumber-revs', action='store_true',
-                      help="Renumber revisions left after filtering.")
+                      help="Renumber revisions left after filtering. "
+                           "svnadmin load do that by default, except some broken versions.")
     parser.add_option('--preserve-revprops', action='store_true',
                       help="Don't filter revision properties.")
 
@@ -834,7 +855,7 @@ def parse_options():
 
     opts.skip_rev = set(opts.skip_rev)
 
-    for optname in 'drop-empty-revs', 'renumber-revs', 'preserve-revprops':
+    for optname in 'renumber-revs', 'preserve-revprops':
         if getattr(opts, optname.replace('-', '_')):
             parser.error("(Option '%s' not implemented)." % optname)
 
@@ -894,6 +915,8 @@ def main():
 
     # Current revision
     revno = ""
+    revlump = None
+    revempty = True
     # Process the dump file.
     while 1:
         # Read one lump at a time
@@ -903,10 +926,12 @@ def main():
 
         # Let the revisions pass through
         if 'Revision-number' in lump.hdrdict:
+            write_revision_lump(fw, flog, revlump, revno, revempty, skipping)
 
+            revlump = lump
+            revempty = True
             revno = lump.hdrdict['Revision-number']
             if int(revno) in opts.skip_rev:
-                print >> flog, 'Revision %s filtered out.' % revno
                 skipping = True
                 continue
 
@@ -924,9 +949,6 @@ def main():
                     print >> flog, "log filtered: %d times" % num_subs
                     lump.correct_headers()
 
-            write_lump(fw, lump)
-            if not opts.quiet:
-                print >> flog, 'Revision %s committed as %s.' % (revno, revno)
             continue
 
         # If we're skipping this revision, go to the next lump
@@ -945,6 +967,14 @@ def main():
         if not paths.interesting(path):
             filtered.add(path)
             continue
+
+        # At this point we have a lump that we need to write
+        # so this revision is not empty and we can write the revision lump if not already done.
+        #   There is the exceptional case of a unresolved tangle (copy from a missing source)
+        #   In that case we still write the revision lump.
+        #   In any case, the dump being produced is invalid until the tangle is resolved, so it does not matter.
+        revempty = False
+        write_revision_lump(fw, flog, revlump, revno, revempty, skipping)
 
         # See if any of the provided filters match against this file
         num_subs = 0
@@ -1013,6 +1043,8 @@ def main():
                     lump.delhdr("Node-copyfrom-rev")
                     lump.delhdr("Node-copyfrom-path")
                     write_lump(fw, lump)
+    # write the last revision if no written already
+    write_revision_lump(fw, flog, revlump, revno, revempty, skipping)
 
     fr.close()
     fw.close()
