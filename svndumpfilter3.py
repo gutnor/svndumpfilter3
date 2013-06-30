@@ -820,6 +820,12 @@ def parse_options():
                       help="Skip (filter out) a specific revision. You can "
                            "specify this option as many times as you need.")
 
+    parser.add_option("--clear-rev", type="int", action="append", default=[],
+                      metavar="REV",
+                      help="Clear (remove all operations, but keep the empty revision, unlike skip)"
+                           "a specific revision. You can "
+                           "specify this option as many times as you need.")
+
     parser.add_option('--standard-project-layout', action='store_true',
                       help="Assume you have a SVN with the normal structure to do some extra validation.\n"
                            "Standard structure=\n"
@@ -854,6 +860,7 @@ def parse_options():
         parser.error("You don't need --ignore-missing if you're untangling.")
 
     opts.skip_rev = set(opts.skip_rev)
+    opts.clear_rev = set(opts.clear_rev)
 
     for optname in 'renumber-revs', 'preserve-revprops':
         if getattr(opts, optname.replace('-', '_')):
@@ -912,6 +919,8 @@ def main():
 
     skipping = False
     # True while we are skipping a revision.
+    clearing = False
+    # True while we are clearing a revision.
 
     # Current revision
     revno = ""
@@ -937,6 +946,8 @@ def main():
 
             skipping = False
 
+            clearing = int(revno) in opts.clear_rev
+
             # Filter svn:log property
             # JT Revision 0 may not have an svn:log entry, so we need do accommodate that
             #   (added if condition)
@@ -951,8 +962,8 @@ def main():
 
             continue
 
-        # If we're skipping this revision, go to the next lump
-        if skipping:
+        # If we're skipping or clearing this revision, go to the next lump
+        if skipping or clearing:
             continue
 
         # Print some kind of progress information.
