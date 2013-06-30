@@ -568,7 +568,7 @@ def write_revision_lump(fw, flog, lump, revno, empty, skipping):
                 if not empty:
                     print >> flog, 'Revision %s committed as %s.' % (revno, revno)
                 else:
-                    print >> flog, 'Empty Revision %s committed as %s.' % (revno, revno)
+                    print >> flog, 'Revision %s committed as %s. (Empty)' % (revno, revno)
 
 
 def fetch_rev_rename(repos, srcrev, srcpath, path, fout, flog, format_dump):
@@ -732,9 +732,8 @@ def inspect_copy_lump(flog, srcpath, path):
             # File copy/move
             if from_path.isRoot():
                 print >> flog, ("        Copy entire version in repository: '%s' => '%s'" % (srcpath, path))
-            elif not to_path.equalsVersion(from_path):
-                # That is typical fake merge
-                print >> flog, ("        Cross version copy: '%s' => '%s'" % (srcpath, path))
+            elif from_path.project != to_path.project:
+                print >> flog, ("        Cross project copy: '%s' => '%s'" % (srcpath, path))
 
 
 def parse_options():
@@ -806,6 +805,16 @@ def parse_options():
                            "that matches the text; the replacement regexp. You "
                            "can specify this option as many times as you need.")
 
+    parser.add_option("--filter-paths", type="string", nargs=3, default=[],
+                      action="append", metavar="RX_PATH RX_MATCH SUB",
+                      help="Apply a regular expression substitution (filter) "
+                           "to the paths of lumps, in effect relocating file and folders."
+                           " This option needs three arguments (separated by "
+                           "spaces): a regular expression that specifies the "
+                           "path to be processed (eg: \".*/misplaced\"); the regexp "
+                           "that matches the text; the replacement regexp. You "
+                           "can specify this option as many times as you need.")
+
     parser.add_option("--filter-logs", type="string", nargs=2, default=[],
                       action="append", metavar="RX_MATCH SUB",
                       help="Apply a regular expression substitution (filter) "
@@ -847,6 +856,8 @@ def parse_options():
     try:
         opts.filter_contents = [(re.compile(a), re.compile(b), c)
                                 for a, b, c in opts.filter_contents]
+        opts.filter_paths = [(re.compile(a), re.compile(b), c)
+                             for a, b, c in opts.filter_paths]
         opts.filter_logs = [(re.compile(a), b)
                             for a, b in opts.filter_logs]
     except Exception, e:
@@ -997,6 +1008,15 @@ def main():
             print >> flog, "contents filtered: %d times" % num_subs
             lump.correct_headers()
 
+        # Filter path
+        for rx_path, rx_search, sub in opts.filter_paths:
+            if rx_path.search(path):
+                repath = re.sub(rx_search, sub, path)
+                if repath != path:
+                    print >> flog, "   [To]   Filter path %s => %s" % (path, repath)
+                    path = repath
+                    lump.hdrdict['Node-path'] = repath
+
         # If this is not a move/copy.
         if not "Node-copyfrom-path" in lump.hdrdict:
             # Just pass through.
@@ -1016,6 +1036,20 @@ def main():
 
             # Check if the copy's source comes from a filtered path.
             if paths.interesting(srcpath):
+                # Filter path
+                for rx_path, rx_search, sub in opts.filter_paths:
+                    if rx_path.search(srcpath):
+                        repath = re.sub(rx_search, sub, srcpath)
+                        if repath != srcpath:
+                            print >> flog, "   [From] Filter path %s => %s" % (srcpath, repath)
+                            srcpath = repath
+                            lump.hdrdict['Node-copyfrom-path'] = repath
+
+                # Apparently circular copying happens and is legit. Whatever
+                # if srcpath == path:
+                #     # That can happen after path filtering.
+                #     print >> flog, "        Circular copying: %s => %s" % (srcpath, path)
+
                 # If it comes from an included path, just pass through.
                 write_lump(fw, lump)
 
